@@ -1,0 +1,270 @@
+import re
+import pandas as pd
+import seaborn as sns
+import base64
+import json
+import requests
+import ast #extract print var
+
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+import time
+from bs4 import BeautifulSoup
+from collections import OrderedDict
+from selenium.webdriver.chrome.options import Options
+#------------------------------------------------------------------------------------------------
+#Code print variable analysis
+
+class PrintVariableVisitor(ast.NodeVisitor):
+    def __init__(self):
+        self.variables = []
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id == 'print':
+            for arg in node.args:
+                if isinstance(arg, ast.Name):
+                    self.variables.append(arg.id)
+
+def Print_var(code):
+# Parse the code into an abstract syntax tree (AST)
+    tree = ast.parse(code)
+    # Define a visitor to traverse the AST and extract variables from print statements
+    # Instantiate the visitor
+
+    visitor = PrintVariableVisitor()
+
+    # Traverse the AST
+    visitor.visit(tree)
+    var = visitor.variables
+    # Extracted variables
+    print("Variables in print statement:", var)
+    return var
+
+#------------------------------------------------------------------------------------------------
+def local_var_list(local_var):
+    keys = local_var.keys()
+    keys_list = list(local_var)
+    keys_list.pop(0)
+    print("-------------------keys_list: ",keys_list)
+    return keys_list
+#------------------------------------------------------------------------------------------------
+def execute(code):
+    try:
+        print("Executing CODE: ",code)
+        local_var = {}
+        res = exec(code, local_var)
+        return None, None, local_var  # No return value if code execution succeeds
+    except FileNotFoundError as e:
+        return None, e, local_var  # Return None for result and the caught exception
+    except pd.errors.ParserError as e:
+        return None, e, local_var  # Return None for result and the caught exception
+    except Exception as e:
+        return None, e, local_var  # Return None for result and the caught exception
+#------------------------------------------------------------------------------------------------
+def O_LLM(query):
+    #
+    data = {
+    "model": "mistral",
+    "prompt": query,
+    "stream": False}
+    response = requests.post("http://localhost:11434/api/generate", data=json.dumps(data))
+    data = json.loads(response.text)
+    answer = data['response']
+    print(answer)
+    return answer
+#------------------------------------------------------------------------------------------------
+def extract_text(input_string, option):
+    if option == 1:
+        pattern = r'\```python(.*?)\```'
+        matches = re.search(pattern, input_string, re.DOTALL)
+        if matches:
+            return matches.group(1).strip()
+        else:
+            return None
+    else:
+        pattern = r'\```(.*?)\```'
+        matches = re.search(pattern, input_string, re.DOTALL)
+        if matches:
+            return matches.group(1).strip()
+        else:
+            return None
+#------------------------------------------------------------------------------------------------
+def check_substring(main_string, substring):
+
+    if substring.lower() in main_string.lower():
+        return True
+    else:
+        return False
+#------------------------------------------------------------------------------------------------
+def Agent07(query):
+    answer = O_LLM(query)
+    main_string = answer
+    substring = "```python"
+    substring_sub = "```"
+    print("\n\n")
+    if check_substring(main_string, substring_sub):
+        print("```, FOUND PREPROCESSING... ")
+        
+        if check_substring(main_string, substring):
+            print("```python, FOUND PREPROCESSING... ")
+            input_string =  answer
+            extracted_text = extract_text(input_string, 1)
+            
+            if extracted_text:
+                answer = extracted_text
+                #print("Extracted Text: \n", answer)
+                code = answer
+            else:
+                #print("No text found between ``` and ```.")
+                code = answer
+        else:
+            print("")
+            if check_substring(main_string, substring_sub):
+                print("```python, FOUND PREPROCESSING... ")
+                input_string =  answer
+                extracted_text = extract_text(input_string, 0)
+
+                if extracted_text:
+                    answer = extracted_text
+                    #print("Extracted Text: \n", answer)
+                    code = answer
+                else:
+                    print("No text found between ``` and ```.")
+                    code = answer
+            
+    else:
+        print("```python ,NOT FOUND")
+        code = answer
+
+    code_to_execute = code
+    #print("\n\ncode:",code)
+    
+    result, error, local_var = execute(code_to_execute)
+    
+    print("\n \nEXECUTION OUTPUT:")
+    if error:
+        print("\n\n")
+        print("Error:", error)
+    else:
+        print("\n\n")
+        print("Result:", result)
+        
+    return result, error, code, local_var
+
+#------------------------------------------------------------------------------------------------
+
+df = pd.DataFrame()
+first_row_csv_string = ""
+
+def Agent01(inp_query):
+    
+    #write a python program to read 'data.csv' and visualize 2 graphs
+    query = f"""
+consider yourself as an Python Data analysis Programmer , where your the best in the world, and has so much self confidence in your code or response.
+And Now :{inp_query}
+Always start code with '```python' and end with '```' Your only supposed to give only one python code.
+Dont add any comments or explanations here, as this will be run in a program, where errors may occur.""" 
+    #
+    print("\nQuery: \n",query)
+    result, error, code, local_var = Agent07(query)
+    if error:
+        print("\n\n")
+        print("Error:", error)
+        for i in range(5):
+            print("*****************************************************************************************")
+            #
+            print("ITERATION: -------------------------0",i)
+            code = str(code)
+            error = str(error)
+            inp_query = str(inp_query)
+            
+            nxt_query = "\nUser:" + inp_query + "\nBot:" + code + "\nUser: Error " + error
+            print(nxt_query)
+            print("\n")
+            result, error, code, local_var = Agent07(nxt_query)
+            
+            
+#             if i == 1:
+#                 try:
+#                     #
+#                     df = local_var["df"]
+#                     print(df)
+
+#                     first_row_csv_string = df.iloc[[0]].to_csv(index=False)
+#                     print(first_row_csv_string)
+#                     first_row_csv_string = str(first_row_csv_string)
+#                 except Exception as e:
+#                     print(e)
+
+            
+            try:
+                
+                if i > 1:
+                    var = Print_var(code)
+                    if var is None:
+                        print("var is NONE")
+                        nxt_query = "/nUser: "+ inp_query + "\n Bot:" + code + "\nUser:" +"output: " + error 
+                    else:
+                        extracted_values = [d[key] for d in local_var if isinstance(d, dict) for key in var if key in d]
+                        print(extracted_values)
+                        nxt_query = "/nUser: "+ inp_query + "\n Bot:" + code + "\nUser:" +"output: " + extracted_values + error
+                        print("oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo")
+                        print("check extracted values: ",extracted_values)
+                        print("\nquery: \n\n")
+                        print(nxt_query)
+                        
+                    variable = local_var[var]
+                    print("++++++++++++++++++++VARIABLE++++++++++++++", variable)
+                    print(type(variable))
+                    nxt_query = "/nUser: "+ inp_query + "\n Bot:" + code + "\nUser:" +"output: "+ variable + " \n " + error 
+                    print("Next Query: ",nxt_query)
+                    result, error, code, local_var = Agent07(nxt_query)
+                    if result:
+                        print("result found: ",result)
+                        break
+#                 else:
+#                     nxt_query = "<user: "+ inp_query +">" + "\n\n" + "<bot: \n" +"Code: " + code + "\n\n Error: " + error #+ "\n\n 1st row of dataframe df = " + first_row_csv_string + " >"+ "\n\n <Prompt> :By looking at the dataframe, you can change or modify and make the code work, Disclaimer: You need to repond with exact code with no extra comments, code or text, as this will be executed in terminal and may cause errors."
+#                     result, error, code, local_var = Agent07(nxt_query)
+#                     if result:
+#                         print("result found: ",result)
+#                         break
+            except Exception as e:
+                print(e)
+    else:
+        print("\n\n")
+        print("Result:", result)
+        
+    return True
+
+
+def Agent02(inp_query):
+    
+    query = f""" {inp_query}
+    
+    By looking at the question do you want to search on internet for better answer the question?
+    The output should be either 1 for YES, or the actual answer for the query
+    """
+    print(query)
+    val = O_LLM(query)
+    print(val)
+    print(type(val))
+    
+    
+    
+    
+    
+    
+
+def Agent47():
+    #inp_query = input("Input .>")
+    inp_query = "Python code to read 'D:\Download\AKHIL MY Custom Build Agents\supermarket.csv' read all columns and print correlation"
+    Data_analysis = Agent01(inp_query)
+
+    
+if __name__ == "__main__":
+    Agent47()
+#------------------------------------------------------------------------------------------------
+
+    
+    
